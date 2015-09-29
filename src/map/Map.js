@@ -16,7 +16,8 @@ L.Map = L.Evented.extend({
 		fadeAnimation: true,
 		trackResize: true,
 		markerZoomAnimation: true,
-		maxBoundsViscosity: 0.0
+		maxBoundsViscosity: 0.0,
+		transform3DLimit: 8388608 // Precision limit of a 32-bit float
 	},
 
 	initialize: function (id, options) { // (HTMLElement or String, Object)
@@ -176,7 +177,7 @@ L.Map = L.Evented.extend({
 
 	panInsideBounds: function (bounds, options) {
 		var center = this.getCenter(),
-			newCenter = this._limitCenter(center, this._zoom, L.latLngBounds(bounds));
+		    newCenter = this._limitCenter(center, this._zoom, L.latLngBounds(bounds));
 
 		if (center.equals(newCenter)) { return this; }
 
@@ -399,10 +400,10 @@ L.Map = L.Evented.extend({
 	},
 
 	getScaleZoom: function (scale, fromZoom) {
+		var crs = this.options.crs;
 		fromZoom = fromZoom === undefined ? this._zoom : fromZoom;
-		return fromZoom + (Math.log(scale) / Math.LN2);
+		return crs.zoom(scale * crs.scale(fromZoom));
 	},
-
 
 	// conversion methods
 
@@ -611,6 +612,10 @@ L.Map = L.Evented.extend({
 		if (this.options.trackResize) {
 			L.DomEvent[onOff](window, 'resize', this._onResize, this);
 		}
+
+		if (L.Browser.any3d && this.options.transform3DLimit) {
+			this[onOff]('moveend', this._onMoveEnd);
+		}
 	},
 
 	_onResize: function () {
@@ -622,6 +627,15 @@ L.Map = L.Evented.extend({
 	_onScroll: function () {
 		this._container.scrollTop  = 0;
 		this._container.scrollLeft = 0;
+	},
+
+	_onMoveEnd: function () {
+		var pos = this._getMapPanePos();
+		if (Math.max(Math.abs(pos.x), Math.abs(pos.y)) >= this.options.transform3DLimit) {
+			// https://bugzilla.mozilla.org/show_bug.cgi?id=1203873 but Webkit also have
+			// a pixel offset on very high values, see: http://jsfiddle.net/dg6r5hhb/
+			this._resetView(this.getCenter(), this.getZoom());
+		}
 	},
 
 	_findEventTargets: function (src, type, bubble) {
@@ -695,8 +709,8 @@ L.Map = L.Evented.extend({
 
 		for (var i = 0; i < targets.length; i++) {
 			targets[i].fire(type, data, true);
-			if (data.originalEvent._stopped
-				|| (targets[i].options.nonBubblingEvents && L.Util.indexOf(targets[i].options.nonBubblingEvents, type) !== -1)) { return; }
+			if (data.originalEvent._stopped ||
+				(targets[i].options.nonBubblingEvents && L.Util.indexOf(targets[i].options.nonBubblingEvents, type) !== -1)) { return; }
 		}
 	},
 
